@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"golang.org/x/crypto/bcrypt"
 
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -23,11 +24,24 @@ var userCollection *mongo.Collection = database.OpenCollection(database.Client, 
 var validate = validator.New()
 
 func HashPassword(password string) string {
-	return ""
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	if err != nil {
+		log.Panic(err)
+	}
+	return string(hash)
 }
 
 func VerifyPassword(userPassword string, providedPassword string) (bool, string) {
-	return false, ""
+	err := bcrypt.CompareHashAndPassword([]byte(userPassword), []byte(providedPassword))
+	check := true
+	msg := ""
+
+	if err != nil {
+		msg = "Password is incorrect"
+		check = false
+	}
+
+	return check, msg
 }
 
 func Signup() gin.HandlerFunc {
@@ -64,14 +78,17 @@ func Signup() gin.HandlerFunc {
 		count, err := userCollection.CountDocuments(ctx, bson.M{"email": user.Email})
 		if err != nil {
 			log.Panic(err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "error occured while checking for the email"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error occurred while checking for the email"})
 			return
 		}
+
+		password := HashPassword(user.Password)
+		user.Password = password
 
 		count, err = userCollection.CountDocuments(ctx, bson.M{"phone": user.Phone})
 		if err != nil {
 			log.Panic(err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "error occured while checking for the phone number"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "error occurred while checking for the phone number"})
 			return
 		}
 
@@ -83,13 +100,13 @@ func Signup() gin.HandlerFunc {
 		user.CreatedAt, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
 		user.UpdatedAt, _ = time.Parse(time.RFC3339, time.Now().Format(time.RFC3339))
 		user.ID = primitive.NewObjectID()
-		user.User_id = user.ID.Hex()
-		token, refreshToken, _ := helper.GenerateAllTokens(*user.Email, *user.First_name, *user.Last_name, *user.UserType, *&user.User_id)
+		user.User_id = user.ID.Hex() // this id is used for accessing the user
+		token, refreshToken, _ := helper.GenerateAllTokens(user.Email, user.FirstName, user.LastName, user.UserType, user.User_id)
 		// In Go, when a function returns multiple values and you don't need all of them,
 		// you can use _ to ignore specific return values.
 
-		user.Token = &token
-		user.RefreshToken = &refreshToken
+		user.Token = token
+		user.RefreshToken = refreshToken
 
 		resultInsertionNumber, insertErr := userCollection.InsertOne(ctx, user)
 		if insertErr != nil {
@@ -103,7 +120,43 @@ func Signup() gin.HandlerFunc {
 
 func Login() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
+		var user models.User
+		var foundUser models.User
 
+		if err := c.BindJSON(&user); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		err := userCollection.FindOne(ctx, bson.M{"email": user.Email}).Decode(&foundUser)
+		defer cancel()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "user not found for the given email"})
+			return
+		}
+
+		passwordIsValid, msg := VerifyPassword(foundUser.Password, user.Password)
+		defer cancel()
+		if !passwordIsValid {
+			c.JSON(http.StatusInternalServerError, gin.H{"error":msg})
+			return
+		}
+
+		if foundUser.Email == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "user not found"})
+			return
+		}
+
+		token, refreshToken, _ := helper.GenerateAllTokens(foundUser.Email,foundUser.FirstName,foundUser.LastName,foundUser.UserType,foundUser.User_id)
+		helper.UpdateAllTokens(token,refreshToken,foundUser.User_id)
+
+		err = userCollection.FindOne(ctx, bson.M{"user_id":foundUser.User_id}).Decode(&foundUser)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error" : err.Error()})
+		}
+
+		c.JSON(http.StatusOK, foundUser)
 	}
 }
 
