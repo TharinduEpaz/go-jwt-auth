@@ -111,7 +111,7 @@ func Signup() gin.HandlerFunc {
 
 		resultInsertionNumber, insertErr := userCollection.InsertOne(ctx, user)
 		if insertErr != nil {
-			msg := fmt.Sprintf("User item was not created")
+			msg := fmt.Sprintf("Failed to create user: %v", insertErr)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
 			return
 		}
