@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -18,29 +19,43 @@ func DBinstance() *mongo.Client {
 		log.Fatal("Error loading .env file")
 	}
 
-	MongoDbUrl := os.Getenv("MONGODB_URL")
-
-	serverAPI := options.ServerAPI(options.ServerAPIVersion1)
-	opts := options.Client().ApplyURI(MongoDbUrl).SetServerAPIOptions(serverAPI)
-
-	// Create a new client and connect to the server
-	client, err := mongo.Connect(context.TODO(), opts)
+	uri := os.Getenv("MONGODB_URI")
+	docs := "www.mongodb.com/docs/drivers/go/current/"
+	if uri == "" {
+		log.Fatal("Set your 'MONGODB_URI' environment variable. " +
+			"See: " + docs +
+			"usage-examples/#environment-variable")
+	}
+	
+	client, err := mongo.Connect(context.TODO(), options.Client().ApplyURI(uri))
 	if err != nil {
 		panic(err)
 	}
 
 	defer func() {
-		if err = client.Disconnect(context.TODO()); err != nil {
+		if err := client.Disconnect(context.TODO()); err != nil {
 			panic(err)
 		}
 	}()
 
-	// Send a ping to confirm a successful connection
-	if err := client.Database("admin").RunCommand(context.TODO(), bson.D{{"ping", 1}}).Err(); err != nil {
+	coll := client.Database("sample_mflix").Collection("movies")
+	title := "Back to the Future"
+	var result bson.M
+	err = coll.FindOne(context.TODO(), bson.D{{Key: "title", Value: title}}).Decode(&result)
+	if err == mongo.ErrNoDocuments {
+		fmt.Printf("No document was found with the title %s\n", title)
+		return client
+	}
+
+	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println("Pinged your deployment. You successfully connected to MongoDB!")
+	jsonData, err := json.MarshalIndent(result, "", "    ")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%s\n", jsonData)
 	return client
 }
 
