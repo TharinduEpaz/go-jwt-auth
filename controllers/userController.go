@@ -225,7 +225,8 @@ func GetUser() gin.HandlerFunc {
 		var ctx, cancel = context.WithTimeout(context.Background(), 100*time.Second)
 		defer cancel()
 		var user models.User
-		err := userCollection.FindOne(ctx, bson.M{"user_id": userId}).Decode(&user) //mongo stores data in json format
+		//mongo stores data in json format
+		err := userCollection.FindOne(ctx, bson.M{"user_id": userId}).Decode(&user) 
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
